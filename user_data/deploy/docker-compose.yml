@@ -1,0 +1,46 @@
+# Regime-driven freqtrade deployment: one container trades, one produces signals.
+# Both mount the same user_data so they share user_data/signals/regime.jsonl.
+#
+#   cd <repo>/user_data/deploy
+#   cp .env.example .env && edit .env
+#   docker compose up -d
+#   docker compose logs -f
+services:
+  freqtrade:
+    image: freqtradeorg/freqtrade:stable
+    container_name: ft-regime
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - "../:/freqtrade/user_data"
+    ports:
+      - "127.0.0.1:8080:8080"
+    command: >
+      trade
+      --logfile /freqtrade/user_data/logs/freqtrade.log
+      --db-url sqlite:////freqtrade/user_data/tradesv3.sqlite
+      --config /freqtrade/user_data/config_regime.json
+      --strategy RegimeStrategy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/api/v1/ping"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+
+  producer:
+    image: freqtradeorg/freqtrade:stable
+    container_name: ft-regime-producer
+    restart: unless-stopped
+    depends_on:
+      - freqtrade
+    volumes:
+      - "../:/freqtrade/user_data"
+    entrypoint: ["python3"]
+    command: >
+      /freqtrade/user_data/regime_producer.py
+      --signal-file /freqtrade/user_data/signals/regime.jsonl
+      daemon
+      --pairs ${REGIME_PAIRS:-BTC/USDT:USDT,ETH/USDT:USDT,SOL/USDT:USDT}
+      --exchange ${REGIME_EXCHANGE:-okx}
+      --timeframe ${REGIME_TIMEFRAME:-4h}
+      --interval ${REGIME_INTERVAL:-900}
